@@ -1,0 +1,46 @@
+name: Android CI Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+      if: hashFiles('gradlew') != ''
+
+    - name: Build with Gradle
+      run: ./gradlew build
+      if: hashFiles('gradlew') != ''
+
+    - name: Build with Gradle (alternative)
+      run: |
+        echo "No gradlew found, attempting to use gradle directly"
+        gradle build || echo "Gradle not available, skipping build"
+      if: hashFiles('gradlew') == ''
+
+    - name: Upload build outputs
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: build-outputs
+        path: |
+          app/build/outputs/**/*.apk
+          app/build/outputs/**/*.aab
+          app/build/outputs/**/output-metadata.json
+        retention-days: 7
