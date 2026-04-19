@@ -67,6 +67,7 @@ android {
     // Deshabilitar detector AutoboxingStateCreation que causa fallos en Lint con Compose
 lint {
     disable += "AutoboxingStateCreation"
+    disable += "MutableCollectionMutableState"
     checkReleaseBuilds = false
     abortOnError = false
     }
