@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("kotlin-kapt") // Procesador de anotaciones nativo para Room DB
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
