@@ -31,8 +31,14 @@ object StealthEngine {
         val timePerChar = 60L // 60 milisegundos de lectura por cada letra que nos enviaron
         val randomFactor = Random.nextLong(1000L, 6000L) // Distracción aleatoria entre 1 y 6 segundos
 
-        val totalDelay = baseTime + (incomingLength * timePerChar) + randomFactor
+        var totalDelay = baseTime + (incomingLength * timePerChar) + randomFactor
         
+        // SRE Guard: Limitar delay brutal para mensajes inmensos copiados y pegados.
+        // Nunca demorar más de 12 segundos, para no travar la pool de corrutinas del sistema.
+        if (totalDelay > 12000L) {
+            totalDelay = 12000L
+        }
+
         Log.i(TAG, "🛡️ Anti-Detección Activa: Esperando \${totalDelay}ms para simular que " +
                 "leemos el mensaje y escribimos. (Camuflaje Humano)")
         delay(totalDelay)

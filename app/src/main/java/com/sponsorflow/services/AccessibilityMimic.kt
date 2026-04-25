@@ -4,138 +4,107 @@ import android.accessibilityservice.AccessibilityService
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.sponsorflow.core.Orchestrator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Agente de Acción Biomecánica.
- * Código de Producción: Atraviesa el DOM UI nativo de Android buscando inputs.
- * INCLUYE VECTOR 9: Seguro de Interrupción de Usuario (Ghost Input Blocker).
+ * Agente Biomecánico Restringido (V2.0).
+ * Rol actual: Mantenido en estado latente ("Dormido").
+ * Futuro uso: Solo despertará durante el Intent ACTION_SEND hacia Instagram/Facebook
+ * para presionar quirúrgicamente el botón de "Publicar" y devolver la UI a Home.
+ *
+ * *SE HA ELIMINADO TODA REFERENCIA A SCRAPING DE UI DE WHATSAPP PARA PREVENIR BANEOS*
  */
 class AccessibilityMimic : AccessibilityService() {
 
     companion object {
-        // Variable concurrente para señalar toma de control físico
-        val isHumanIntervening = AtomicBoolean(false)
         private var gestureJob: Job? = Job()
-        private val mimicScope = CoroutineScope(Dispatchers.Main + gestureJob!!)
+        private val mimicScope = CoroutineScope(Dispatchers.Main + (gestureJob ?: Job()))
+        
+        // Bandera que el SocialMediaPublisher activará solo cuando necesite un Click
+        var isWaitingForPublishButton = false
+
+        // SRE Guard: Graceful degradation variables
+        private var targetStartTime: Long = 0L
+        private const val TIMEOUT_MS = 10000L // 10 segundos máximo buscando el botón
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.i("Sponsorflow_Mimic", "Agente Mimic Conectado y Listo.")
+        Log.i("Sponsorflow_Mimic_V2", "Agente Biomecánico Conectado. En Modo Latente (Esperando Intents).")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         
-        // VECTOR 9 DEFENSA: Detección de dedos humanos
-        val humanInterventionEvents = listOf(
-            AccessibilityEvent.TYPE_VIEW_CLICKED,
-            AccessibilityEvent.TYPE_VIEW_FOCUSED,
-            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
-        )
-        
-        if (humanInterventionEvents.contains(event.eventType)) {
-            Log.w("NEXUS_Accessibility", "⚠️ Intervención Física Detectada. Cancelando control IA.")
-            isHumanIntervening.set(true)
-            // Cortamos de manera inmediata la corrutina de gestos
-            gestureJob?.cancelChildren()
-            
-            // Permitimos que la persona tome el control por 10 segundos antes de considerar volver a intervenir
-            mimicScope.launch {
-                delay(10000)
-                isHumanIntervening.set(false)
-            }
+        // Si no estamos en medio de una campaña de publicación, ignoramos TODO el tráfico
+        // Esto ahorra un 90% de batería comparado con la V1.
+        if (!isWaitingForPublishButton) return
+
+        // --- SISTEMA DE CLICK FINAL - SPRINT 3 ---
+        // Android acaba de traer la UI de la Red Social cargada con la foto y el texto del Intent.
+        val rootNode = rootInActiveWindow ?: return
+        val packageName = event.packageName?.toString() ?: ""
+
+        // Verificación de Timeout para Graceful Degradation (evita que se quede atascado para siempre buscando un botón que cambió)
+        if (targetStartTime == 0L) {
+            targetStartTime = System.currentTimeMillis()
+        } else if (System.currentTimeMillis() - targetStartTime > TIMEOUT_MS) {
+            Log.e("Sponsorflow_Mimic_V2", "⏳ TIMEOUT: No se encontró el botón de publicar tras ${TIMEOUT_MS}ms. Abortando misión para ahorrar batería.")
+            isWaitingForPublishButton = false
+            targetStartTime = 0L
+            performGlobalAction(GLOBAL_ACTION_HOME) // Failsafe fallback
+            return
         }
 
-        // Si el humano está escribiendo, nos callamos.
-        if (isHumanIntervening.get()) return
+        // Quitamos la restricción estricta de paquete (isFacebook, isInstagram).
+        // Si la bandera está activa, el Agente asumirá que la app actual en pantalla (sea original o un clon modificado)
+        // es el objetivo, y buscará los botones de acción para completar la misión.
+        if (isWaitingForPublishButton) {
+            // Buscamos cualquier botón que grite "Acción Final" en múltiples idiomas o apps clónicas
+            val targetNodes = rootNode.findAccessibilityNodeInfosByText("Publicar")
+                .ifEmpty { rootNode.findAccessibilityNodeInfosByText("Compartir") }
+                .ifEmpty { rootNode.findAccessibilityNodeInfosByText("Siguiente") }
+                .ifEmpty { rootNode.findAccessibilityNodeInfosByText("Share") }
+                .ifEmpty { rootNode.findAccessibilityNodeInfosByText("Post") }
+                .ifEmpty { rootNode.findAccessibilityNodeInfosByText("Subir") }
+                .ifEmpty { rootNode.findAccessibilityNodeInfosByText("Upload") }
+                .ifEmpty { rootNode.findAccessibilityNodeInfosByText("Crear") }
+                .ifEmpty { rootNode.findAccessibilityNodeInfosByText("Tweet") }
+                .ifEmpty { rootNode.findAccessibilityNodeInfosByText("Enviar") }
 
-        // Si no hay orden del Orquestador, nos quedamos dormidos
-        val textToType = Orchestrator.pendingAutoReply ?: return
-        
-        // Android cambió de ventana
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || 
-            event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            
-            val rootNode = rootInActiveWindow ?: return
-            
-            // Lanzamos ejecución asíncrona pero amarrada al gestureJob para poder ser cancelada
-            mimicScope.launch {
-                try {
-                    val injected = injectTextAndSend(rootNode, textToType)
-                    if (injected) {
-                        Orchestrator.clearPendingReply()
-                        delay(1000) // Delay largo para asegurar el envío de red visual
-                        performGlobalAction(GLOBAL_ACTION_BACK)
-                        delay(200)
-                        performGlobalAction(GLOBAL_ACTION_HOME)
-                        Log.i("Sponsorflow_Mimic", "Misión Ejecutada y Confirmada. Regresando a las sombras.")
-                    } else {
-                         Log.e("Sponsorflow_Mimic", "Latencia o Conflicto en UI detectado. Falló la verificación de envío.")
+            for (node in targetNodes) {
+                if (node.isClickable || node.parent?.isClickable == true) {
+                    val clickableNode = if (node.isClickable) node else node.parent
+                    val success = clickableNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+
+                    if (success) {
+                        Log.i("Sponsorflow_Mimic_V2", "🎯 ¡Botón presionado con éxito en $packageName! Volviendo a base.")
+                        
+                        // Misión cumplida, bajamos la guardia.
+                        isWaitingForPublishButton = false
+                        targetStartTime = 0L // Reset SRE timeout
+                        
+                        // Retirada táctica: Escondemos la red social del dueño para que no interrumpa.
+                        // Usamos un pequeño delay para dejar que la red social inicie el upload.
+                        mimicScope.launch {
+                            kotlinx.coroutines.delay(1000)
+                            performGlobalAction(GLOBAL_ACTION_HOME)
+                        }
+                        break
                     }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    Log.w("NEXUS_Accessibility", "💥 Abortado por choque biométrico.")
                 }
             }
         }
-    }
-
-    /**
-     * V15 DEFENSA DE DENSIDAD ESPACIAL:
-     * Siempre usa "NodeInfo" (Id, Etiquetas) en vez de coordenadas "X,Y". 
-     * Eso garantiza que funcionará igual de bien en Pantalla Dividida, Foldables o tablets.
-     */
-    private suspend fun injectTextAndSend(root: AccessibilityNodeInfo, text: String): Boolean {
-        val inputNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
-            .ifEmpty { findNodesByClass(root, "android.widget.EditText") }
-
-        if (inputNodes.isNotEmpty()) {
-            val inputBox = inputNodes[0]
-            val arguments = android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
-            val inputSuccess = inputBox.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-            
-            if (inputSuccess) {
-                // Simula que la persona está escribiendo. Si el humano toca la pantalla aquí, esto lanzará CancellationException
-                val typingDelay = Math.min((text.length * 50).toLong(), 2000L)
-                delay(typingDelay)
-                
-                val sendNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/send")
-                if (sendNodes.isNotEmpty()) {
-                    sendNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    
-                    // VECTOR 12 DEFENSA: Sincronización Fantasma (Red Lenta)
-                    // No podemos asumir que fue "enviado". Debemos VERIFICAR que la caja de texto se limpió,
-                    // lo cual Android solo hace cuando la Payload entró al bus de red.
-                    delay(300) // Da tiempo al motor de UI
-                    return inputBox.text.isNullOrEmpty() || inputBox.text.toString() == "Mensaje"
-                }
-            }
-        }
-        return false
-    }
-
-    private fun findNodesByClass(rootNode: AccessibilityNodeInfo?, className: String): List<AccessibilityNodeInfo> {
-        val result = mutableListOf<AccessibilityNodeInfo>()
-        if (rootNode == null) return result
-        if (rootNode.className?.toString()?.contains(className, ignoreCase = true) == true) {
-            result.add(rootNode)
-        }
-        for (i in 0 until rootNode.childCount) {
-            result.addAll(findNodesByClass(rootNode.getChild(i), className))
-        }
-        return result
     }
 
     override fun onInterrupt() {
-        Log.e("Sponsorflow_Mimic", "El servicio fue interrumpido por Android.")
+        Log.e("Sponsorflow_Mimic_V2", "El servicio fue interrumpido por Android.")
+        isWaitingForPublishButton = false // SRE Sudden Death Reset
+        targetStartTime = 0L
         gestureJob?.cancelChildren()
     }
 }

@@ -36,15 +36,49 @@ object DataSanitizer {
                 val rawVal = json.get(key)
                 if (rawVal is Number) return rawVal.toDouble()
                 
-                // Si el LLM lo mandó como String ("$50.50"):
+                // Si el LLM lo mandó como String
                 val rawString = rawVal.toString()
                 val cleanString = rawString.replace(Regex("[^0-9.]"), "")
                 if (cleanString.isNotEmpty()) return cleanString.toDouble()
             }
             fallback
         } catch (e: Exception) {
-            Log.w(TAG, "Fallo al sanitizar la llave JSON '$key'. Retornando fallback: $fallback")
+            Log.w(TAG, "Fallo al sanitizar la llave JSON. Retornando fallback: \$fallback")
             fallback
+        }
+    }
+
+    /**
+     * V19: Edge Case Form Sanitizer.
+     * Evita OOM (Out of Memory) y SQLiteBlobTooBigEx si un bot o troll introduce 50,000 caracteres.
+     */
+    fun sanitizeEntityText(input: String?, maxLength: Int = 1000): String {
+        if (input.isNullOrBlank()) return ""
+        // Recortamos el String a la longitud máxima segura
+        val safeText = if (input.length > maxLength) input.substring(0, maxLength) else input
+        return safeText.trim() // Retiene emojis asiáticos sin romperse, Android TextView maneja bien UTF-8.
+    }
+
+    /**
+     * Valida que un número ingresado en campo de texto sea estrictamente positivo y seguro para SQLite.
+     * Rechaza: Null, Letras, Emojis Asiáticos, Números Negativos, y desbordamientos (Infinity).
+     */
+    fun parseSafePositivePrice(priceInput: String?): Double? {
+        if (priceInput.isNullOrBlank()) return null
+        
+        return try {
+            // Eliminar espacios vacíos, comas (para localizar floats)
+            val cleanInput = priceInput.trim().replace(",", ".")
+            val value = cleanInput.toDouble()
+            
+            // Si meten un 1e308, Double puede volverse Infinity o NaN.
+            if (value.isNaN() || value.isInfinite()) return null
+            if (value < 0.0) return null // Nada de precios negativos
+            if (value > 999_999_999.0) return null // Prevención de desbordamiento SQLite REAL
+            
+            value
+        } catch (e: NumberFormatException) {
+            null
         }
     }
 }

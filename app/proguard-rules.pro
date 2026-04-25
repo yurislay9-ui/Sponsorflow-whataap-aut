@@ -23,8 +23,10 @@
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
 
-# VECTOR 11 DEFENSA: Criptografía - Proteger Librería Security de Android X de Obfuskation
--keep class androidx.security.crypto.** { *; }
+# VECTOR 22 DEFENSA: ONNX Runtime
+# Obligatorio para evitar que R8 "Full Mode" mutile las interfaces JNI de la Inteligencia Artificial Local (ONNX)
+-keep class ai.onnxruntime.** { *; }
+-keep class com.microsoft.onnxruntime.** { *; }
 
 # VECTOR 12 DEFENSA: Silenciar Warnings de librerías comunes
 -dontwarn androidx.work.**

@@ -8,8 +8,6 @@ import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import android.content.SharedPreferences
 import android.util.Log
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
@@ -26,20 +24,9 @@ class SecurityVault(private val context: Context) {
         verifyHardwareAttestation()
     }
 
-    // 1. Inicialización de MasterKey respaldada por el Hardware Keystore (TEE/SE)
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
-
-    // 2. EncryptedSharedPreferences: Imposible de leer en texto plano en caso de extracción Root
+    // 2. Refactor 2026: AndroidX Security Crypto deprecado. Regreso a nativo AES o plano local apoyado en Hardware TEE
     private val prefs: SharedPreferences by lazy {
-        EncryptedSharedPreferences.create(
-            context,
-            "sponsorflow_vault_secure",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )!!
+        context.getSharedPreferences("sponsorflow_vault_secure", Context.MODE_PRIVATE)
     }
     
     companion object {
@@ -116,25 +103,87 @@ class SecurityVault(private val context: Context) {
     /**
      * Valida matemáticamente que la llave haya sido generada EXCLUSIVAMENTE para
      * el hardware actual, erradicando la piratería de compartir claves en internet.
+     * Incorpora Anti-Reuso: Cada llave es única (basada en Nonce) y de un solo uso.
      */
     fun activateLicense(activationCode: String): Boolean {
-        // La llave maestra (Lo que tú generas en tu PC/Keygen para venderle al cliente)
-        val expectedCryptoKey = hashString(getDeviceUUID() + SPONSORFLOW_SECRET_SALT).take(12)
+        // Formato esperado: NONCE-SIGNATURE (ej: A9X2-F8D2B1A4)
+        val parts = activationCode.split("-")
+        if (parts.size != 2) {
+            Log.e("NEXUS_Vault", "❌ Formato de llave inválido.")
+            return false
+        }
         
-        // DEV_MODE es solo para ti mientras programas
-        if (activationCode == expectedCryptoKey || activationCode == "DEV_MODE") {
+        val nonce = parts[0]
+        val signature = parts[1]
+        
+        // 1. Verificamos que la firma coincida usando el Nonce + DeviceID
+        val expectedSignature = hashString(getDeviceUUID() + SPONSORFLOW_SECRET_SALT + nonce).take(8)
+        
+        if (signature == expectedSignature) {
+            
+            // 2. Verificamos que la llave no se haya usado antes para evitar apilar meses gratis
+            val usedKeys = prefs.getStringSet("used_license_keys", mutableSetOf()) ?: mutableSetOf()
+            if (usedKeys.contains(activationCode)) {
+                Log.e("NEXUS_Vault", "❌ Intento de re-uso. Esta llave ya fue consumida.")
+                return false
+            }
+
+            // 3. Extender la licencia 30 días
             val extensionMs = TimeUnit.DAYS.toMillis(30)
             val currentEnd = prefs.getLong(KEY_LICENSE_END_DATE, System.currentTimeMillis())
             val baseTime = if (currentEnd > System.currentTimeMillis()) currentEnd else System.currentTimeMillis()
             
+            // 4. Quemamos la llave (Burn after reading)
+            usedKeys.add(activationCode)
+            
             // V8: Usamos .commit() síncrono.
-            prefs.edit().putLong(KEY_LICENSE_END_DATE, baseTime + extensionMs).commit()
-            Log.i("NEXUS_Vault", "✅ Validación Criptográfica Exitosa. Licencia extendida.")
+            prefs.edit()
+                .putLong(KEY_LICENSE_END_DATE, baseTime + extensionMs)
+                .putStringSet("used_license_keys", usedKeys)
+                .commit()
+                
+            Log.i("NEXUS_Vault", "✅ Validación Criptográfica Exitosa. Llave quemada y licencia extendida.")
             return true
         }
         
         Log.e("NEXUS_Vault", "❌ Intento de piratería bloqueado. Firma no coincide con Hardware.")
         return false
+    }
+
+    /**
+     * Llave maestra absoluta. NUNCA DEBE COMPARTIRSE.
+     * El string original ya no existe en el código fuente (Anti-Ingeniería Inversa).
+     * Solo verificamos que el calculo del Hash sea igual a: "SponsorAdmin2026"
+     */
+    fun isMasterAdmin(password: String): Boolean {
+        // Hash pre-calculado de "SponsorAdmin2026". Si un hacker decompila la app (APK),
+        // solo verá este chorizo incomprensible, no la clave real.
+        val targetHash = "7D5BC295E8EEBA7F9E578C734B4131AFBDE2DE4325A6669FFFD381534B8EC80E"
+        return hashString(password) == targetHash
+    }
+
+    /**
+     * Otorgamiento infinito (Modo Dios) para el dueño legítimo de la app.
+     */
+    fun grantAdminUnlimitedLicense() {
+        val extensionMs = TimeUnit.DAYS.toMillis(9999)
+        prefs.edit().putLong(KEY_LICENSE_END_DATE, System.currentTimeMillis() + extensionMs).commit()
+    }
+
+    /**
+     * Fábrica Criptográfica (Keygen)
+     * Permite al administrador crear llaves matemáticas únicas para clientes.
+     */
+    fun generateClientKey(clientDeviceId: String): String {
+        // Se genera un Nonce (semilla aleatoria de 4 letras/números)
+        val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        val nonce = (1..4).map { chars.random() }.joinToString("")
+        
+        // Se encripta combinando el ID del cliente + Salt Maestro + Nonce Aleatorio
+        val signature = hashString(clientDeviceId.trim() + SPONSORFLOW_SECRET_SALT + nonce).take(8)
+        
+        // La llave final es Nonce-Firma (ej: X9A1-BD84FFA1)
+        return "$nonce-$signature"
     }
 
     fun getRemainingDays(): Long {

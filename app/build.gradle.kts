@@ -1,18 +1,19 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("com.google.devtools.ksp") version "2.0.20-1.0.24" // Reemplazo moderno de Kapt para Kotlin 2.0
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
+    id("com.google.dagger.hilt.android")
 }
 
 android {
     namespace = "com.sponsorflow"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.sponsorflow"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
         
@@ -21,23 +22,6 @@ android {
         // Forzamos solo ARM64 (el 99% de dispositivos móviles post-2018).
         ndk {
             abiFilters.add("arm64-v8a")
-        }
-        
-        // CONFIGURACIÓN CRÍTICA PARA GITHUB ACTIONS Y NDK C++
-        externalNativeBuild {
-            cmake {
-                cppFlags += "-std=c++17 -O3"
-                // Optimizamos NDK para compilar más ràpido en los servidores de GitHub
-                arguments += "-DANDROID_ARM_MODE=arm"
-            }
-        }
-    }
-
-    // Le decimos a Gradle dónde está nuestro script de compilación C++
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
         }
     }
 
@@ -49,60 +33,81 @@ android {
     }
     
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "21"
     }
 
     buildFeatures {
         compose = true
     }
-composeOptions {
-    kotlinCompilerExtensionVersion = "1.5.11"
+
+    // Configuración robusta de empaquetado para NDK y ML/ONNX Libraries
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/*.kotlin_module",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*"
+            )
+        }
+        jniLibs {
+            // Evita colisiones de librerías nativas cuando varias dependencias traen el mismo .so (muy común en ONNX)
+            pickFirsts += listOf("**/*.so")
+        }
     }
     
     // Deshabilitar detector AutoboxingStateCreation que causa fallos en Lint con Compose
-lint {
-    disable += "AutoboxingStateCreation"
-    disable += "MutableCollectionMutableState"
-    checkReleaseBuilds = false
-    abortOnError = false
+    lint {
+        disable += "AutoboxingStateCreation"
+        disable += "MutableCollectionMutableState"
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
-    implementation("androidx.activity:activity-compose:1.8.0")
-    
-    // Dependencias de Jetpack Compose (UI Nativa)
-    implementation(platform("androidx.compose:compose-bom:2023.10.01"))
+    // Core & Lifecycle
+    implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
+
+    // Jetpack Compose (Gestionado por BOM)
+    val composeBom = platform("androidx.compose:compose-bom:2026.03.00")
+    implementation(composeBom)
+    implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
-    
+
     // Coroutines para nuestro "Load & Drop" asíncrono
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
 
     // Room Database (La Memoria y Catálogo SQLite)
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
+    ksp("androidx.room:room-compiler:2.8.4")
 
     // ML Kit Text Recognition (El Ojo: Visión Offline para Capturas de Pantalla)
-    implementation("com.google.mlkit:text-recognition:16.0.0")
-    
-    // Para simplificar promesas a Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 
-    // ViewModel para Jetpack Compose (Gestión de Estado)
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
+    // Inyección de Dependencias (Dagger Hilt + KSP)
+    implementation("com.google.dagger:hilt-android:2.51.1")
+    ksp("com.google.dagger:hilt-compiler:2.51.1")
 
-    // Jetpack Security: Cifrado AES-256 anclado al Hardware Keystore para Anti-Piratería
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    
     // VECTOR 14 DEFENSA: WorkManager para el ResurrectorWorker
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    
+    // Vector 22: ONNX Runtime para Semantic Match & Adaptive Thinking de Mythos
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.3")
+    
+    // DEPENDENCIAS DE PRUEBAS UNITARIAS Y RED TEAM TESTING
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.11.1")
+    testImplementation("androidx.test:core:1.5.0")
+    testImplementation("androidx.test.ext:junit:1.1.5")
 }

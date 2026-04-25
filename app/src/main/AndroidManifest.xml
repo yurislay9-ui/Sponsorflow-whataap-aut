@@ -12,14 +12,15 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     
     <!-- VECTOR BATERÍA (Test 14): Permisos de Resurrección SRE y Evasión Doze Mode -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPT" />
-
-    <!-- VECTOR BATERÍA (Test 14): Permisos de Resurrección SRE y Evasión Doze Mode -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- Permisos para Agendar Publicaciones Precisas (Sprint 3) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     
     <application
         android:name=".SponsorflowApp"
@@ -33,7 +34,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Receptor de Alarmas para Retargeting (El Francotirador) -->
+        <receiver android:name=".services.RetargetingReceiver" android:exported="false" />
         
+        <!-- EL MOTOR V4.0 (Inmortalidad del Swarm) -->
+        <service 
+            android:name=".services.ImmortalSwarmService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false">
+        </service>
+
         <!-- Registrando a los Agentes del Sistema -->
         <service android:name=".services.NotificationListener"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
